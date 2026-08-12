@@ -1,9 +1,10 @@
 import asyncio
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from sqlalchemy import desc, select
 
-from . import schemas, trader
+from . import auth, schemas, trader
 from .database import SessionLocal
 from .exchange_manager import manager
 from .models import Card, Position, Trade
@@ -14,6 +15,26 @@ from .telegram_bot import notifier
 from .ws_manager import ws_manager
 
 router = APIRouter(prefix="/api")
+
+
+# ---------------------------------------------------------------------- auth
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@router.get("/auth-info")
+async def auth_info():
+    return {"required": auth.required()}
+
+
+@router.post("/login")
+async def login(payload: LoginRequest):
+    if not auth.required():
+        return {"token": None}
+    if not auth.check_password(payload.password):
+        raise HTTPException(401, "Неверный пароль")
+    return {"token": auth.make_token()}
 
 
 def card_to_dict(card: Card) -> dict:
@@ -249,6 +270,9 @@ async def telegram_test():
 
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    if not auth.check_token(ws.query_params.get("token")):
+        await ws.close(code=4401)
+        return
     await ws_manager.connect(ws)
     try:
         while True:

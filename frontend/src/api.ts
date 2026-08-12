@@ -1,10 +1,22 @@
 const BASE = ''
 
+export const getToken = () => localStorage.getItem('sd_token')
+export const setToken = (t: string | null) =>
+  t ? localStorage.setItem('sd_token', t) : localStorage.removeItem('sd_token')
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getToken()
   const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'X-Auth-Token': token } : {}),
+      ...(options?.headers ?? {}),
+    },
   })
+  if (res.status === 401 && path !== '/api/login') {
+    window.dispatchEvent(new Event('sd-unauthorized'))
+  }
   if (!res.ok) {
     let detail = res.statusText
     try {

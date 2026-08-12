@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api } from './api'
+import { api, getToken, setToken } from './api'
 import type { Card, CardState } from './types'
 
 export type Tab = 'main' | 'history' | 'account' | 'settings'
@@ -11,6 +11,8 @@ interface Toast {
   kind: 'ok' | 'err'
 }
 
+export type AuthState = 'unknown' | 'ok' | 'need'
+
 interface Store {
   tab: Tab
   filter: Filter
@@ -19,9 +21,12 @@ interface Store {
   settings: any
   wsConnected: boolean
   toasts: Toast[]
+  auth: AuthState
 
   setTab: (t: Tab) => void
   setFilter: (f: Filter) => void
+  checkAuth: () => Promise<boolean>
+  login: (password: string) => Promise<void>
   loadCards: () => Promise<void>
   loadSettings: () => Promise<void>
   patchCard: (id: number, patch: Partial<Card>) => Promise<void>
@@ -39,9 +44,37 @@ export const useStore = create<Store>((set, get) => ({
   settings: null,
   wsConnected: false,
   toasts: [],
+  auth: 'unknown',
 
   setTab: (tab) => set({ tab }),
   setFilter: (filter) => set({ filter }),
+
+  checkAuth: async () => {
+    const info = await api.get<{ required: boolean }>('/api/auth-info')
+    if (!info.required) {
+      set({ auth: 'ok' })
+      return true
+    }
+    if (!getToken()) {
+      set({ auth: 'need' })
+      return false
+    }
+    try {
+      await api.get('/api/cards')
+      set({ auth: 'ok' })
+      return true
+    } catch {
+      setToken(null)
+      set({ auth: 'need' })
+      return false
+    }
+  },
+
+  login: async (password) => {
+    const r = await api.post<{ token: string | null }>('/api/login', { password })
+    setToken(r.token)
+    set({ auth: 'ok' })
+  },
 
   loadCards: async () => {
     const cards = await api.get<Card[]>('/api/cards')
@@ -67,7 +100,14 @@ export const useStore = create<Store>((set, get) => ({
   connectWS: () => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const connect = () => {
-      const ws = new WebSocket(`${proto}://${location.host}/api/ws`)
+      if (get().auth !== 'ok') {
+        setTimeout(connect, 1000)
+        return
+      }
+      const token = getToken()
+      const ws = new WebSocket(
+        `${proto}://${location.host}/api/ws${token ? `?token=${token}` : ''}`,
+      )
       ws.onopen = () => {
         set({ wsConnected: true })
         const ping = setInterval(() => {

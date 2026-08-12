@@ -2,11 +2,12 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import auth
 from .api import router
 from .database import init_db
 from .exchange_manager import manager
@@ -41,6 +42,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+AUTH_EXEMPT = {"/api/login", "/api/auth-info"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if auth.required() and path.startswith("/api") and path not in AUTH_EXEMPT:
+        token = request.headers.get("x-auth-token")
+        if not auth.check_token(token):
+            return JSONResponse({"detail": "Требуется вход"}, status_code=401)
+    return await call_next(request)
+
 
 app.include_router(router)
 

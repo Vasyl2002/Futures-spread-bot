@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import Header from './components/Header'
+import Login from './components/Login'
 import Toasts from './components/Toasts'
 import Account from './pages/Account'
 import History from './pages/History'
@@ -8,13 +9,34 @@ import Settings from './pages/Settings'
 import { useStore } from './store'
 
 export default function App() {
-  const { tab, loadCards, loadSettings, connectWS } = useStore()
+  const { tab, auth, checkAuth, loadCards, loadSettings, connectWS } = useStore()
 
   useEffect(() => {
-    loadCards()
-    loadSettings()
-    connectWS()
+    const boot = async () => {
+      const ok = await checkAuth()
+      if (ok) {
+        loadCards()
+        loadSettings()
+      }
+      connectWS()
+    }
+    boot()
+    const onUnauthorized = () => useStore.setState({ auth: 'need' })
+    window.addEventListener('sd-unauthorized', onUnauthorized)
+    return () => window.removeEventListener('sd-unauthorized', onUnauthorized)
   }, [])
+
+  if (auth === 'unknown') {
+    return <div className="min-h-screen flex items-center justify-center text-term-muted">Загрузка…</div>
+  }
+  if (auth === 'need') {
+    return (
+      <>
+        <Login />
+        <Toasts />
+      </>
+    )
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
