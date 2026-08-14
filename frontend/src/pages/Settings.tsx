@@ -20,6 +20,7 @@ export default function Settings() {
         max_alerts_per_tick: 6,
         cooldown_sec: 300,
         reset_spread_pct: 0.4,
+        telegram_spot: false,
         quote: 'USDT',
         ...(next.scanner || {}),
       }
@@ -210,9 +211,9 @@ export default function Settings() {
           </label>
         </div>
         <p className="text-xs text-term-muted mb-3">
-          Сам смотрит все монеты на 4 биржах. На каждую монету — один колл. Пока спред открыт,
-          повторных сообщений не будет. Когда спред сойдётся (ниже порога «сошёлся») — придёт
-          закрывающий колл, и монета снова может дать сигнал.
+          В Telegram уходит только <b>новый импульс</b> по монете: спред недавно был узкий и
+          резко разошёлся. Застрявший базис (ONE/COTI часами на 3–7%) отсекается. Один колл на
+          монету, пока спред не сойдётся. По умолчанию в телегу только фьюч↔фьюч.
         </p>
         <div className="grid md:grid-cols-4 gap-3">
           <div>
@@ -251,7 +252,16 @@ export default function Settings() {
               onChange={(e) => setPath(['scanner', 'include_spot'], e.target.checked)}
               className="accent-blue-500"
             />
-            Сканировать ещё фьюч↔спот
+            Сканировать фьюч↔спот в мониторе
+          </label>
+          <label className="flex items-end gap-2 text-sm pb-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.scanner?.telegram_spot ?? false}
+              onChange={(e) => setPath(['scanner', 'telegram_spot'], e.target.checked)}
+              className="accent-blue-500"
+            />
+            Слать фьюч↔спот в Telegram
           </label>
         </div>
       </section>

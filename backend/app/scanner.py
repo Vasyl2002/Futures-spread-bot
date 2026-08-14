@@ -7,13 +7,18 @@
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections import deque
 from itertools import combinations
 from typing import Any
 
+from sqlalchemy import select
+
+from .database import SessionLocal
 from .exchange_manager import manager
+from .models import KV
 from .settings_store import EXCHANGES
 from .telegram_bot import notifier, recommend_entry
 from .ws_manager import ws_manager
@@ -27,6 +32,9 @@ MKT_LABELS = {"futures": "FUT", "spot": "SPOT"}
 MAX_BOOK_WIDTH_PCT = 1.5
 # выше этого почти наверняка разные контракты / мёртвая монета
 MAX_SPREAD_PCT = 8.0
+# история спреда: ~20 мин при интервале 12 с
+HISTORY_LEN = 100
+OPEN_KV_KEY = "scanner_open"
 
 
 class SpreadScanner:
@@ -42,6 +50,8 @@ class SpreadScanner:
         self.tick_ms: int = 0
         # монета -> активный колл, пока спред не сошёлся
         self._open: dict[str, dict] = {}
+        self._history: dict[str, deque] = {}
+        self._open_loaded = False
 
     def configure(self, settings: dict[str, Any]) -> None:
         self._settings = settings
@@ -137,6 +147,10 @@ class SpreadScanner:
                     continue  # шортить спот нельзя
                 if spread > MAX_SPREAD_PCT:
                     continue
+                if direction == "ab":
+                    long_vol, short_vol = a.get("quote_volume") or 0, b.get("quote_volume") or 0
+                else:
+                    long_vol, short_vol = b.get("quote_volume") or 0, a.get("quote_volume") or 0
                 rec = recommend_entry(spread, long_fr, short_fr, long_mkt, short_mkt)
                 opps.append({
                     "symbol": base,
@@ -147,16 +161,19 @@ class SpreadScanner:
                         "exchange": long_ex, "label": EX_LABELS[long_ex],
                         "market": long_mkt, "price": long_px,
                         "funding_rate": long_fr, "ccxt_symbol": long_sym,
+                        "quote_volume": long_vol,
                     },
                     "short": {
                         "exchange": short_ex, "label": EX_LABELS[short_ex],
                         "market": short_mkt, "price": short_px,
                         "funding_rate": short_fr, "ccxt_symbol": short_sym,
+                        "quote_volume": short_vol,
                     },
                     "leverage": rec["leverage"],
                     "margin": rec["margin"],
                     "margin_short": rec["margin_short"],
                     "kind": "fut-fut" if long_mkt == "futures" and short_mkt == "futures" else "fut-spot",
+                    "min_volume": min(long_vol, short_vol),
                 })
 
         opps.sort(key=lambda x: x["spread"], reverse=True)
@@ -186,35 +203,79 @@ class SpreadScanner:
         width = (ask - bid) / bid * 100
         return width <= MAX_BOOK_WIDTH_PCT
 
+    async def _load_open(self) -> None:
+        if self._open_loaded:
+            return
+        async with SessionLocal() as session:
+            row = (await session.execute(select(KV).where(KV.key == OPEN_KV_KEY))).scalar_one_or_none()
+        if row and row.value:
+            try:
+                self._open = json.loads(row.value) or {}
+            except json.JSONDecodeError:
+                self._open = {}
+        self._open_loaded = True
+
+    async def _save_open(self) -> None:
+        payload = json.dumps(self._open)
+        async with SessionLocal() as session:
+            row = (await session.execute(select(KV).where(KV.key == OPEN_KV_KEY))).scalar_one_or_none()
+            if row is None:
+                session.add(KV(key=OPEN_KV_KEY, value=payload))
+            else:
+                row.value = payload
+            await session.commit()
+
+    def _record_history(self, best: dict[str, dict]) -> None:
+        for symbol, opp in best.items():
+            hist = self._history.setdefault(symbol, deque(maxlen=HISTORY_LEN))
+            hist.append(opp["spread"])
+
+    def _is_new_spike(self, symbol: str, spread: float, threshold: float, reset_at: float) -> bool:
+        """Настоящий арбитраж появляется импульсом. Если спред часами висит на 3–7% —
+        это мёртвый базис, он не сойдётся."""
+        warmup = int(self.cfg().get("warmup_scans", 8))
+        hist = list(self._history.get(symbol) or [])
+        if len(hist) < warmup:
+            return False
+        # текущую точку не считаем «узкой»
+        past = hist[:-1] if hist else []
+        if not past:
+            return False
+        was_tight = min(past) <= max(reset_at, threshold * 0.25)
+        # спред должен заметно вырасти относительно недавнего минимума
+        jumped = spread - min(past) >= max(1.0, threshold * 0.5)
+        return was_tight and jumped
+
     async def _alert(self, opps: list[dict]) -> None:
-        """Один колл на монету. Пока спред открыт — молчим.
-        Следующий колл (и сообщение «сошёлся») — только когда спред вернулся к норме.
-        """
+        await self._load_open()
         threshold = float(self.cfg().get("min_spread_pct", 2.0))
         reset_at = float(self.cfg().get("reset_spread_pct", 0.4))
-        max_alerts = int(self.cfg().get("max_alerts_per_tick", 6))
+        max_alerts = int(self.cfg().get("max_alerts_per_tick", 4))
+        min_vol = float(self.cfg().get("min_volume_usd", 200000))
+        telegram_spot = bool(self.cfg().get("telegram_spot", False))
 
         best: dict[str, dict] = {}
         for o in opps:
             prev = best.get(o["symbol"])
             if prev is None or o["spread"] > prev["spread"]:
                 best[o["symbol"]] = o
+        self._record_history(best)
 
-        # 1) закрытые спреды — один колл «сошёлся», после этого монета снова свободна
         closed = []
         for symbol, state in list(self._open.items()):
             current = best.get(symbol)
             spread_now = current["spread"] if current else 0.0
             if spread_now <= reset_at:
-                closed.append((symbol, state, spread_now, current))
+                closed.append((symbol, state, spread_now))
                 self._open.pop(symbol, None)
+        if closed:
+            await self._save_open()
+        for symbol, state, spread_now in closed:
+            await self._send_close(symbol, state, spread_now)
 
-        for symbol, state, spread_now, current in closed:
-            await self._send_close(symbol, state, spread_now, current)
-
-        # 2) новые открытия — не больше одной монеты-колла, лучшая комбинация бирж
         sent = 0
         ranked = sorted(best.values(), key=lambda x: x["spread"], reverse=True)
+        dirty = False
         for opp in ranked:
             if sent >= max_alerts:
                 break
@@ -222,6 +283,14 @@ class SpreadScanner:
             if symbol in self._open:
                 continue
             if opp["spread"] < threshold:
+                continue
+            if opp["kind"] != "fut-fut" and not telegram_spot:
+                continue
+            if (opp.get("min_volume") or 0) < min_vol:
+                log.info("skip %s thin volume %.0f", symbol, opp.get("min_volume") or 0)
+                continue
+            if not self._is_new_spike(symbol, opp["spread"], threshold, reset_at):
+                log.info("skip %s stuck/fake spread %.3f%%", symbol, opp["spread"])
                 continue
             confirmed = await self._confirm(opp)
             if confirmed is None or confirmed["spread"] < threshold:
@@ -235,11 +304,14 @@ class SpreadScanner:
                 "kind": confirmed["kind"],
                 "ts": int(time.time() * 1000),
             }
+            dirty = True
             await self._send_call(confirmed)
             self.recent_alerts.appendleft({**confirmed, "ts": int(time.time() * 1000)})
             sent += 1
+        if dirty:
+            await self._save_open()
 
-    async def _send_close(self, symbol: str, state: dict, spread_now: float, current: dict | None) -> None:
+    async def _send_close(self, symbol: str, state: dict, spread_now: float) -> None:
         long = state.get("long") or {}
         short = state.get("short") or {}
         text = (
@@ -254,11 +326,23 @@ class SpreadScanner:
     async def _confirm(self, opp: dict) -> dict | None:
         try:
             long, short = opp["long"], opp["short"]
+            min_book = float(self.cfg().get("min_book_usd", 400))
             book_l, book_s = await asyncio.gather(
                 manager.get_book_top(long["exchange"], long["market"], long["ccxt_symbol"]),
                 manager.get_book_top(short["exchange"], short["market"], short["ccxt_symbol"]),
             )
             if not book_l.get("ask") or not book_s.get("bid"):
+                return None
+            # ширина стакана: если сам рынок 0.5%+ — это не арбитраж, а дырка в книге
+            for book, role in ((book_l, "long"), (book_s, "short")):
+                if book["bid"] and book["ask"] and book["bid"] > 0:
+                    width = (book["ask"] - book["bid"]) / book["bid"] * 100
+                    if width > 0.45:
+                        log.info("skip %s wide book %s %.2f%%", opp["symbol"], role, width)
+                        return None
+            if (book_l.get("ask_notional") or 0) < min_book or (book_s.get("bid_notional") or 0) < min_book:
+                log.info("skip %s thin book L=%.0f S=%.0f", opp["symbol"],
+                         book_l.get("ask_notional") or 0, book_s.get("bid_notional") or 0)
                 return None
             spread = (book_s["bid"] - book_l["ask"]) / book_l["ask"] * 100
             out = dict(opp)
@@ -282,13 +366,17 @@ class SpreadScanner:
             return f"{x * 100:+.4f}%" if x is not None else "—"
 
         kind = "фьюч ↔ фьюч" if opp["kind"] == "fut-fut" else "фьюч ↔ спот"
+        vol = opp.get("min_volume") or 0
+        vol_txt = f"{vol/1e6:.1f}M" if vol >= 1e6 else f"{vol/1e3:.0f}k"
         text = (
-            f"🔔 <b>СПРЕД {opp['symbol']}/{opp['quote']}</b>  "
-            f"<b>{opp['spread']:+.3f}%</b>  ({kind})\n\n"
+            f"🔔 <b>НОВЫЙ СПРЕД {opp['symbol']}/{opp['quote']}</b>  "
+            f"<b>{opp['spread']:+.3f}%</b>  ({kind})\n"
+            f"Импульс (раньше был узкий, не застрявший базис)\n\n"
             f"🟢 LONG {long['label']} {MKT_LABELS[long['market']]} @ {long['price']}\n"
             f"🔴 SHORT {short['label']} {MKT_LABELS[short['market']]} @ {short['price']}\n\n"
             f"Funding: long {fr(long.get('funding_rate'))} | "
-            f"short {fr(short.get('funding_rate'))}\n\n"
+            f"short {fr(short.get('funding_rate'))}\n"
+            f"Объём 24ч ≥ {vol_txt} USDT\n\n"
             f"💡 Заходить: <b>{opp['margin_short']}</b>\n"
             f"💡 Плечо: <b>{opp['leverage']}x</b>\n"
             f"({opp['margin']})"

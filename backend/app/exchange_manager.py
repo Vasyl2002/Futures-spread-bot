@@ -145,7 +145,13 @@ class ExchangeManager:
         ask = ob["asks"][0][0] if ob["asks"] else None
         bid_qty = ob["bids"][0][1] if ob["bids"] else 0
         ask_qty = ob["asks"][0][1] if ob["asks"] else 0
-        result = {"bid": bid, "ask": ask, "bid_qty": bid_qty, "ask_qty": ask_qty, "ts": ob.get("timestamp")}
+        bid_notional = sum(float(p) * float(q) for p, q in (ob["bids"] or [])[:5])
+        ask_notional = sum(float(p) * float(q) for p, q in (ob["asks"] or [])[:5])
+        result = {
+            "bid": bid, "ask": ask, "bid_qty": bid_qty, "ask_qty": ask_qty,
+            "bid_notional": bid_notional, "ask_notional": ask_notional,
+            "ts": ob.get("timestamp"),
+        }
         self._book_cache[key] = (now, result)
         return result
 
@@ -186,15 +192,27 @@ class ExchangeManager:
                 or info.get("fundingFeeRate")
                 or info.get("predictedFundingRate")
             )
+            quote_vol = _to_float(t.get("quoteVolume"))
+            if not quote_vol:
+                quote_vol = _to_float(
+                    info.get("turnoverOf24h") or info.get("quoteVolume")
+                    or info.get("usdtVolume") or info.get("volumeUsd")
+                )
+            if not quote_vol:
+                base_vol = _to_float(t.get("baseVolume"))
+                if base_vol and last:
+                    quote_vol = base_vol * float(last)
             prev = out.get(base)
-            # если дубли (редко) — берём более ликвидный по mid
-            if prev is None or abs((bid + ask) / 2) > 0:
+            mid = (float(bid) + float(ask)) / 2
+            if prev is None or (quote_vol or 0) >= (prev.get("quote_volume") or 0):
                 out[base] = {
                     "bid": float(bid),
                     "ask": float(ask),
                     "last": float(last or bid),
                     "symbol": symbol,
                     "funding_rate": funding,
+                    "quote_volume": quote_vol or 0.0,
+                    "mid": mid,
                 }
         return out
 

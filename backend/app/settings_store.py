@@ -24,6 +24,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "max_alerts_per_tick": 6,
         "cooldown_sec": 300,
         "reset_spread_pct": 0.4,    # повторный колл только после того, как спред сошёлся
+        "min_volume_usd": 200000,   # 24ч оборот каждой ноги, отсекает мёртвые альты
+        "min_book_usd": 400,        # глубина стакана (топ-5), иначе не пролезешь
+        "telegram_spot": False,     # в Telegram только фьюч↔фьюч (спот-базис часто ложный)
+        "warmup_scans": 8,          # не орать на старте, пока нет истории
         "quote": "USDT",
     },
     # Telegram
