@@ -177,14 +177,13 @@ class ExchangeManager:
                 continue
             base = m.get("base") or symbol.split("/")[0]
             info = t.get("info") or {}
-            bid = t.get("bid")
-            ask = t.get("ask")
+            # только живой стакан: last/mark как bid=ask даёт фейковый арбитраж (COTI/ONE)
+            bid = t.get("bid") or _to_float(info.get("bestBidPrice"))
+            ask = t.get("ask") or _to_float(info.get("bestAskPrice"))
             last = t.get("last") or t.get("close")
-            if not bid:
-                bid = _to_float(info.get("bestBidPrice") or info.get("markPrice") or last)
-            if not ask:
-                ask = _to_float(info.get("bestAskPrice") or info.get("markPrice") or last)
-            if not bid or not ask:
+            if not bid or not ask or float(bid) <= 0 or float(ask) <= 0:
+                continue
+            if float(bid) == float(ask):
                 continue
             funding = _to_float(
                 t.get("fundingRate")

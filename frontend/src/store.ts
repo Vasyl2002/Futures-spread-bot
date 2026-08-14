@@ -22,8 +22,9 @@ export interface SpreadOpp {
   leverage: number
   margin: string
   margin_short: string
-  long: { exchange: string; label: string; market: string; price: number; funding_rate: number | null }
-  short: { exchange: string; label: string; market: string; price: number; funding_rate: number | null }
+  long: { exchange: string; label: string; market: string; price: number; funding_rate: number | null; quote_volume?: number }
+  short: { exchange: string; label: string; market: string; price: number; funding_rate: number | null; quote_volume?: number }
+  min_volume?: number
   ts?: number
 }
 

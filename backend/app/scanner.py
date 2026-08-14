@@ -51,6 +51,7 @@ class SpreadScanner:
         # монета -> активный колл, пока спред не сошёлся
         self._open: dict[str, dict] = {}
         self._history: dict[str, deque] = {}
+        self._row_hist: dict[str, deque] = {}
         self._open_loaded = False
 
     def configure(self, settings: dict[str, Any]) -> None:
@@ -176,9 +177,11 @@ class SpreadScanner:
                     "min_volume": min(long_vol, short_vol),
                 })
 
-        opps.sort(key=lambda x: x["spread"], reverse=True)
+        self._record_row_history(opps)
+        live = [o for o in opps if self._is_live(o)]
+        live.sort(key=lambda x: x["spread"], reverse=True)
         display_min = float(self.cfg().get("display_min_pct", 0.08))
-        shown = [o for o in opps if o["spread"] >= display_min][:120]
+        shown = [o for o in live if o["spread"] >= display_min][:120]
         self.opportunities = shown
         self.scanned_symbols = len(seen_bases)
         self.last_scan_ts = int(time.time() * 1000)
@@ -193,15 +196,51 @@ class SpreadScanner:
             "data": shown[:60],
         })
 
-        await self._alert(opps)
+        await self._alert(live)
 
     @staticmethod
     def _sane(tick: dict) -> bool:
         bid, ask = tick["bid"], tick["ask"]
-        if bid <= 0 or ask <= 0 or ask < bid * 0.5:
+        if bid <= 0 or ask <= 0 or ask < bid * 0.5 or bid == ask:
             return False
         width = (ask - bid) / bid * 100
         return width <= MAX_BOOK_WIDTH_PCT
+
+    @staticmethod
+    def _row_key(o: dict) -> str:
+        return (f"{o['symbol']}|{o['long']['exchange']}|{o['long']['market']}|"
+                f"{o['short']['exchange']}|{o['short']['market']}")
+
+    def _record_row_history(self, opps: list[dict]) -> None:
+        for o in opps:
+            hist = self._row_hist.setdefault(self._row_key(o), deque(maxlen=HISTORY_LEN))
+            hist.append((o["spread"], o["long"]["price"], o["short"]["price"]))
+
+    def _is_live(self, o: dict) -> bool:
+        """Живой спред: есть объём и цена/спред реально двигаются. Стоячие COTI/ONE отсекаем."""
+        min_vol = float(self.cfg().get("min_volume_usd", 200000))
+        if (o.get("min_volume") or 0) < min_vol:
+            return False
+        hist = list(self._row_hist.get(self._row_key(o)) or [])
+        warmup = max(5, int(self.cfg().get("warmup_scans", 8)) - 1)
+        if o["spread"] >= 1.0:
+            if len(hist) < warmup:
+                return False
+            spreads = [h[0] for h in hist]
+            longs = [h[1] for h in hist]
+            shorts = [h[2] for h in hist]
+            if max(longs) == min(longs) or max(shorts) == min(shorts):
+                return False
+            if min(spreads) >= 1.0:
+                return False
+            if max(spreads) - min(spreads) < 0.2:
+                return False
+        elif len(hist) >= warmup:
+            longs = [h[1] for h in hist]
+            shorts = [h[2] for h in hist]
+            if max(longs) == min(longs) and max(shorts) == min(shorts):
+                return False
+        return True
 
     async def _load_open(self) -> None:
         if self._open_loaded:

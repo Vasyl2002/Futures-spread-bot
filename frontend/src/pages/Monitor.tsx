@@ -8,6 +8,13 @@ function fmtPrice(v: number) {
   return v.toPrecision(5)
 }
 
+function vol(v?: number) {
+  if (!v) return '—'
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}k`
+  return v.toFixed(0)
+}
+
 function fr(v: number | null) {
   if (v == null) return '—'
   return `${(v * 100).toFixed(4)}%`
@@ -88,15 +95,14 @@ export default function Monitor() {
       )}
 
       <p className="text-xs text-term-muted mb-3">
-        Сканер сам смотрит все пары Binance / Bitget / KuCoin / Gate.io. Если спред выше порога —
-        сразу колл в Telegram (монета, лонг/шорт, чем заходить, плечо). Карточку создаёшь только
-        когда сам хочешь зайти.
+        Сканер показывает только живые спреды: есть объём и цена двигается. Стоячий базис
+        (COTI/ONE часами на 5%) скрыт и в телегу не идёт.
       </p>
 
       {rows.length === 0 ? (
         <div className="text-center py-20 text-term-muted">
           {scannerMeta.ts
-            ? 'Сейчас нет спредов выше фильтра — сканер работает, коллы придут в Telegram'
+            ? 'Нет живых спредов: стоячие/без объёма отфильтрованы'
             : 'Первый скан ещё идёт, подожди ~15 секунд'}
         </div>
       ) : (
@@ -109,6 +115,7 @@ export default function Monitor() {
                 <th className="px-3 py-2">🟢 LONG</th>
                 <th className="px-3 py-2">🔴 SHORT</th>
                 <th className="px-3 py-2">Тип</th>
+                <th className="px-3 py-2 text-right">Объём 24ч</th>
                 <th className="px-3 py-2">Заход / плечо</th>
                 <th className="px-3 py-2"></th>
               </tr>
@@ -149,6 +156,9 @@ export default function Monitor() {
                     </td>
                     <td className="px-3 py-2 text-[10px] text-term-muted">
                       {o.kind === 'fut-fut' ? 'FUT↔FUT' : 'FUT↔SPOT'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-term-muted">
+                      {vol(o.min_volume)}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       <b>{o.margin_short}</b> · {o.leverage}x
