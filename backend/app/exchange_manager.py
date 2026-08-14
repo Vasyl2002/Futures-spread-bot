@@ -85,11 +85,15 @@ class ExchangeManager:
 
         proxy = (ex_cfg.get("proxy") or "").strip()
         if proxy:
+            # ccxt требует ровно один вид прокси, выбираем по схеме URL
             if proxy.startswith("socks"):
                 client.socksProxy = proxy
-            else:
-                client.httpProxy = proxy
+            elif proxy.startswith("https://"):
                 client.httpsProxy = proxy
+            elif proxy.startswith("http://"):
+                client.httpProxy = proxy
+            else:
+                log.warning("ignoring invalid proxy for %s: %r", exchange, proxy)
         return client
 
     async def get_client(self, exchange: str, market: str) -> ccxt.Exchange:

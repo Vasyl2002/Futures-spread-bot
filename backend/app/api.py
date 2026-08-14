@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -241,10 +242,21 @@ async def get_settings():
     return mask_secrets(await load_settings())
 
 
+PROXY_RE = re.compile(r"^(https?|socks[45]?h?)://", re.IGNORECASE)
+
+
 @router.put("/settings")
 async def put_settings(patch: dict):
     current = await load_settings()
     cleaned = unmask_patch(patch, current)
+    for ex, cfg in (cleaned.get("exchanges") or {}).items():
+        proxy = (cfg.get("proxy") or "").strip() if isinstance(cfg, dict) else ""
+        if proxy and not PROXY_RE.match(proxy):
+            raise HTTPException(
+                400,
+                f"Прокси для {ex} должен начинаться с http://, https:// или socks5:// "
+                f"(вы ввели: {proxy}). Если прокси не нужен — оставьте поле пустым.",
+            )
     merged = await save_settings(cleaned)
     # переконфигурируем компоненты на лету
     manager.configure(merged)

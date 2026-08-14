@@ -171,7 +171,7 @@ export default function Settings() {
               )}
               <input
                 className="input"
-                placeholder="Прокси (опционально)"
+                placeholder="Прокси: http://user:pass@host:port (пусто = не нужен)"
                 value={form.exchanges[ex.id].proxy}
                 onChange={(e) => setPath(['exchanges', ex.id, 'proxy'], e.target.value)}
               />
