@@ -11,6 +11,7 @@ from . import auth
 from .api import router
 from .database import init_db
 from .exchange_manager import manager
+from .scanner import scanner
 from .settings_store import load_settings
 from .spread_engine import engine
 from .telegram_bot import notifier
@@ -27,9 +28,12 @@ async def lifespan(app: FastAPI):
     manager.configure(settings)
     notifier.configure(settings)
     engine.configure(settings)
+    scanner.configure(settings)
     engine.start()
+    scanner.start()
     yield
     await engine.stop()
+    await scanner.stop()
     await manager.close()
 
 

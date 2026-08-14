@@ -9,6 +9,7 @@ from . import auth, schemas, trader
 from .database import SessionLocal
 from .exchange_manager import manager
 from .models import Card, Position, Trade
+from .scanner import scanner
 from .settings_store import (EXCHANGES, load_settings, mask_secrets,
                              save_settings, unmask_patch)
 from .spread_engine import engine
@@ -229,6 +230,42 @@ async def klines(exchange: str, market: str, symbol: str, quote: str = "USDT",
     return {"candles": data}
 
 
+# ---------------------------------------------------------------------- scanner
+
+@router.get("/scanner")
+async def scanner_snapshot():
+    return scanner.snapshot()
+
+
+@router.post("/scanner/card")
+async def scanner_to_card(payload: dict):
+    """Создать карточку из найденного спреда, чтобы смотреть/торговать вручную."""
+    symbol = (payload.get("symbol") or "").upper()
+    long_ = payload.get("long") or {}
+    short = payload.get("short") or {}
+    if not symbol or not long_.get("exchange") or not short.get("exchange"):
+        raise HTTPException(400, "Нужны symbol, long, short")
+    spread = float(payload.get("spread") or 0.25)
+    card = Card(
+        symbol=symbol,
+        quote=payload.get("quote") or "USDT",
+        exchange_a=long_["exchange"],
+        market_a=long_.get("market") or "futures",
+        exchange_b=short["exchange"],
+        market_b=short.get("market") or "futures",
+        side_mode="a_long_b_short",
+        open_threshold=max(0.05, round(spread * 0.7, 3)),
+        close_threshold=0.0,
+        status="stopped",
+        telegram_signals=False,
+    )
+    async with SessionLocal() as session:
+        session.add(card)
+        await session.commit()
+        await session.refresh(card)
+    return card_to_dict(card)
+
+
 @router.get("/balances")
 async def balances():
     results = await asyncio.gather(*[manager.fetch_balances(ex) for ex in EXCHANGES])
@@ -263,6 +300,7 @@ async def put_settings(patch: dict):
     await manager.reset()
     notifier.configure(merged)
     engine.configure(merged)
+    scanner.configure(merged)
     return mask_secrets(merged)
 
 

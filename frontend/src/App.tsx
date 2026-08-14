@@ -4,8 +4,10 @@ import Login from './components/Login'
 import Toasts from './components/Toasts'
 import Account from './pages/Account'
 import History from './pages/History'
+import Monitor from './pages/Monitor'
 import Main from './pages/Main'
 import Settings from './pages/Settings'
+import { api } from './api'
 import { useStore } from './store'
 
 export default function App() {
@@ -17,6 +19,17 @@ export default function App() {
       if (ok) {
         loadCards()
         loadSettings()
+        api.get<any>('/api/scanner').then((s) =>
+          useStore.setState({
+            scanner: s.data || [],
+            scannerMeta: {
+              ts: s.ts,
+              scanned: s.scanned,
+              tick_ms: s.tick_ms,
+              errors: s.errors || {},
+            },
+          }),
+        ).catch(() => {})
       }
       connectWS()
     }
@@ -42,6 +55,7 @@ export default function App() {
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="flex-1 px-4 py-3 max-w-[1800px] w-full mx-auto">
+        {tab === 'monitor' && <Monitor />}
         {tab === 'main' && <Main />}
         {tab === 'history' && <History />}
         {tab === 'account' && <Account />}

@@ -14,6 +14,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Режим торговли: paper — виртуальные сделки (работает без ключей), live — реальные ордера
     "trading_mode": "paper",
     "poll_interval_sec": 2.0,
+    # Глобальный сканер спредов (без карточек) — шлёт коллы в Telegram
+    "scanner": {
+        "enabled": True,
+        "interval_sec": 12,
+        "min_spread_pct": 0.25,     # порог колла в Telegram
+        "display_min_pct": 0.08,    # что показывать в мониторе
+        "include_spot": True,       # ещё фьюч↔спот (шорт всегда на фьючах)
+        "max_alerts_per_tick": 6,
+        "cooldown_sec": 300,
+        "quote": "USDT",
+    },
     # Telegram
     "telegram": {
         "enabled": False,

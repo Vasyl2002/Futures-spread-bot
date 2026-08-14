@@ -1,7 +1,8 @@
 import { Tab, useStore } from '../store'
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'main', label: 'Главная' },
+  { id: 'monitor', label: 'Монитор' },
+  { id: 'main', label: 'Карточки' },
   { id: 'history', label: 'История' },
   { id: 'account', label: 'Аккаунт' },
   { id: 'settings', label: 'Настройки' },

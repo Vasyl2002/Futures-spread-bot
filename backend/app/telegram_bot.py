@@ -12,6 +12,7 @@ class TelegramNotifier:
     def __init__(self) -> None:
         self._settings: dict = {}
         self._last_signal: dict[int, float] = {}  # card_id -> monotonic ts
+        self._last_key: dict[str, float] = {}
 
     def configure(self, settings: dict) -> None:
         self._settings = settings.get("telegram") or {}
@@ -51,6 +52,14 @@ class TelegramNotifier:
 
     def mark_signal(self, card_id: int) -> None:
         self._last_signal[card_id] = time.monotonic()
+
+    def signal_allowed_key(self, key: str, cooldown: float | None = None) -> bool:
+        cd = float(cooldown if cooldown is not None else self._settings.get("signal_cooldown_sec", 300))
+        last = self._last_key.get(key, 0.0)
+        return time.monotonic() - last >= cd
+
+    def mark_signal_key(self, key: str) -> None:
+        self._last_key[key] = time.monotonic()
 
 
 def recommend_entry(spread_pct: float, funding_long: float | None,

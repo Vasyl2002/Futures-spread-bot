@@ -149,6 +149,55 @@ class ExchangeManager:
         self._book_cache[key] = (now, result)
         return result
 
+    async def fetch_tickers_map(self, exchange: str, market: str, quote: str = "USDT") -> dict:
+        """Все тикеры биржи: {BASE: {bid, ask, last, symbol, funding_rate}}.
+
+        Для сканера спредов. Bid/ask берём из стакана, если биржа их отдаёт
+        пачкой; иначе используем last/mark (KuCoin фьючерсы).
+        """
+        client = await self.get_client(exchange, market)
+        raw = await client.fetch_tickers()
+        out: dict[str, dict] = {}
+        for symbol, t in raw.items():
+            m = client.markets.get(symbol) or {}
+            if market == "futures" and not m.get("swap", True):
+                continue
+            if market == "spot" and m and not m.get("spot", True):
+                continue
+            q = m.get("quote") or (symbol.split("/")[1].split(":")[0] if "/" in symbol else "")
+            if q != quote:
+                continue
+            if market == "futures" and m.get("settle") and m.get("settle") != quote:
+                continue
+            base = m.get("base") or symbol.split("/")[0]
+            info = t.get("info") or {}
+            bid = t.get("bid")
+            ask = t.get("ask")
+            last = t.get("last") or t.get("close")
+            if not bid:
+                bid = _to_float(info.get("bestBidPrice") or info.get("markPrice") or last)
+            if not ask:
+                ask = _to_float(info.get("bestAskPrice") or info.get("markPrice") or last)
+            if not bid or not ask:
+                continue
+            funding = _to_float(
+                t.get("fundingRate")
+                or info.get("fundingRate")
+                or info.get("fundingFeeRate")
+                or info.get("predictedFundingRate")
+            )
+            prev = out.get(base)
+            # если дубли (редко) — берём более ликвидный по mid
+            if prev is None or abs((bid + ask) / 2) > 0:
+                out[base] = {
+                    "bid": float(bid),
+                    "ask": float(ask),
+                    "last": float(last or bid),
+                    "symbol": symbol,
+                    "funding_rate": funding,
+                }
+        return out
+
     async def get_funding(self, exchange: str, symbol: str) -> dict:
         """Ставка финансирования и время следующей выплаты (кэш 60 c)."""
         key = (exchange, symbol)
@@ -226,3 +275,12 @@ class ExchangeManager:
 
 
 manager = ExchangeManager()
+
+
+def _to_float(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None

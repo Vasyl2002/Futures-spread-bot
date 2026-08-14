@@ -9,7 +9,21 @@ export default function Settings() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (settings) setForm(JSON.parse(JSON.stringify(settings)))
+    if (settings) {
+      const next = JSON.parse(JSON.stringify(settings))
+      next.scanner = {
+        enabled: true,
+        interval_sec: 12,
+        min_spread_pct: 0.25,
+        display_min_pct: 0.08,
+        include_spot: true,
+        max_alerts_per_tick: 6,
+        cooldown_sec: 300,
+        quote: 'USDT',
+        ...(next.scanner || {}),
+      }
+      setForm(next)
+    }
   }, [settings])
 
   if (!form) return <div className="text-term-muted py-16 text-center">Загрузка…</div>
@@ -180,19 +194,62 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* движок */}
+      {/* сканер */}
       <section className="bg-term-card border border-term-border rounded-xl p-4 mb-4">
-        <h2 className="font-bold text-sm mb-3">Движок мониторинга</h2>
-        <div className="flex items-center gap-3">
-          <label className="text-xs text-term-muted">Интервал опроса, сек</label>
-          <input
-            type="number"
-            step="0.5"
-            min="1"
-            className="input !w-24"
-            value={form.poll_interval_sec}
-            onChange={(e) => setPath(['poll_interval_sec'], Number(e.target.value))}
-          />
+        <div className="flex items-center gap-3 mb-3">
+          <h2 className="font-bold text-sm">Сканер спредов → Telegram</h2>
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.scanner?.enabled ?? true}
+              onChange={(e) => setPath(['scanner', 'enabled'], e.target.checked)}
+              className="accent-blue-500"
+            />
+            включён
+          </label>
+        </div>
+        <p className="text-xs text-term-muted mb-3">
+          Сам смотрит все монеты на 4 биржах. Карточки создавать не нужно — как только спред выше
+          порога, сразу колл в Telegram.
+        </p>
+        <div className="grid md:grid-cols-4 gap-3">
+          <div>
+            <label className="text-xs text-term-muted">Порог колла, %</label>
+            <input
+              type="number"
+              step="0.05"
+              className="input mt-1"
+              value={form.scanner?.min_spread_pct ?? 0.25}
+              onChange={(e) => setPath(['scanner', 'min_spread_pct'], Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-term-muted">Интервал скана, сек</label>
+            <input
+              type="number"
+              className="input mt-1"
+              value={form.scanner?.interval_sec ?? 12}
+              onChange={(e) => setPath(['scanner', 'interval_sec'], Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-term-muted">Антиспам на пару, сек</label>
+            <input
+              type="number"
+              className="input mt-1"
+              value={form.scanner?.cooldown_sec ?? 300}
+              onChange={(e) => setPath(['scanner', 'cooldown_sec'], Number(e.target.value))}
+            />
+          </div>
+          <label className="flex items-end gap-2 text-sm pb-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.scanner?.include_spot ?? true}
+              onChange={(e) => setPath(['scanner', 'include_spot'], e.target.checked)}
+              className="accent-blue-500"
+            />
+            Сканировать ещё фьюч↔спот
+          </label>
         </div>
       </section>
 
