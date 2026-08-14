@@ -49,6 +49,7 @@ class ExchangeManager:
         self._settings: dict[str, Any] = {}
         self._funding_cache: dict[tuple[str, str], tuple[float, dict]] = {}
         self._book_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
+        self._tickers_cache: dict[tuple[str, str, str], dict] = {}
         self._lock = asyncio.Lock()
 
     def configure(self, settings: dict[str, Any]) -> None:
@@ -73,6 +74,7 @@ class ExchangeManager:
         ex_cfg = (self._settings.get("exchanges") or {}).get(exchange, {})
         config: dict[str, Any] = {
             "enableRateLimit": True,
+            "timeout": 30000,
             "options": {"defaultType": "swap" if market == "futures" else "spot"},
         }
         if ex_cfg.get("api_key"):
@@ -158,11 +160,31 @@ class ExchangeManager:
     async def fetch_tickers_map(self, exchange: str, market: str, quote: str = "USDT") -> dict:
         """Все тикеры биржи: {BASE: {bid, ask, last, symbol, funding_rate}}.
 
-        Для сканера спредов. Bid/ask берём из стакана, если биржа их отдаёт
-        пачкой; иначе используем last/mark (KuCoin фьючерсы).
+        Для сканера спредов. Только живой bid/ask (не last/mark).
+        При сбое Gate/KuCoin берём последний удачный снимок, чтобы UI не краснел.
         """
-        client = await self.get_client(exchange, market)
-        raw = await client.fetch_tickers()
+        cache_key = (exchange, market, quote)
+        last_err: Exception | None = None
+        for attempt in range(2):
+            try:
+                client = await self.get_client(exchange, market)
+                raw = await client.fetch_tickers()
+                out = self._parse_tickers(client, raw, market, quote)
+                if out:
+                    self._tickers_cache[cache_key] = out
+                return out
+            except Exception as e:
+                last_err = e
+                log.warning("tickers %s %s attempt %s: %s", exchange, market, attempt + 1, str(e)[:160])
+                await asyncio.sleep(1.2)
+        cached = self._tickers_cache.get(cache_key)
+        if cached:
+            log.warning("tickers %s %s: using cache (%s coins)", exchange, market, len(cached))
+            return cached
+        raise last_err or RuntimeError("tickers failed")
+
+    @staticmethod
+    def _parse_tickers(client, raw: dict, market: str, quote: str) -> dict:
         out: dict[str, dict] = {}
         for symbol, t in raw.items():
             m = client.markets.get(symbol) or {}
@@ -177,7 +199,6 @@ class ExchangeManager:
                 continue
             base = m.get("base") or symbol.split("/")[0]
             info = t.get("info") or {}
-            # только живой стакан: last/mark как bid=ask даёт фейковый арбитраж (COTI/ONE)
             bid = t.get("bid") or _to_float(info.get("bestBidPrice"))
             ask = t.get("ask") or _to_float(info.get("bestAskPrice"))
             last = t.get("last") or t.get("close")

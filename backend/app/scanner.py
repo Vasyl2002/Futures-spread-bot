@@ -36,6 +36,23 @@ MAX_SPREAD_PCT = 8.0
 HISTORY_LEN = 100
 OPEN_KV_KEY = "scanner_open"
 
+_VENUE = {
+    "binance": "Binance", "bitget": "Bitget", "kucoin": "KuCoin", "gateio": "Gate.io",
+}
+_MKT = {"futures": "фьючерсы", "spot": "спот"}
+
+
+def _friendly_error(ex: str, mkt: str, err: Exception) -> str:
+    name = f"{_VENUE.get(ex, ex)} {_MKT.get(mkt, mkt)}"
+    text = str(err).lower()
+    if "timeout" in text or "timed out" in text:
+        return f"{name} не ответила вовремя, повторю на следующем скане"
+    if "429" in text or "rate limit" in text:
+        return f"{name}: лимит запросов, повторю"
+    if "451" in text or "restricted" in text:
+        return f"{name}: биржа блокирует IP — нужен прокси"
+    return f"{name}: временно нет данных, повторю"
+
 
 class SpreadScanner:
     def __init__(self) -> None:
@@ -107,7 +124,7 @@ class SpreadScanner:
             try:
                 books[(ex, mkt)] = await manager.fetch_tickers_map(ex, mkt, quote)
             except Exception as e:
-                errors[f"{ex}:{mkt}"] = str(e)[:180]
+                errors[f"{ex}:{mkt}"] = _friendly_error(ex, mkt, e)
                 log.warning("scanner %s %s: %s", ex, mkt, e)
 
         await asyncio.gather(*[load(ex, mkt) for ex in enabled for mkt in markets])

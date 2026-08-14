@@ -85,11 +85,9 @@ export default function Monitor() {
       </div>
 
       {errors.length > 0 && (
-        <div className="mb-3 text-xs text-term-red bg-term-red/10 rounded-lg px-3 py-2">
+        <div className="mb-3 text-xs text-yellow-400/90 bg-yellow-500/10 rounded-lg px-3 py-2">
           {errors.map(([k, v]) => (
-            <div key={k}>
-              {k}: {v}
-            </div>
+            <div key={k}>{v}</div>
           ))}
         </div>
       )}
