@@ -23,6 +23,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "include_spot": True,       # ещё фьюч↔спот (шорт всегда на фьючах)
         "max_alerts_per_tick": 6,
         "cooldown_sec": 300,
+        "reset_spread_pct": 0.4,    # повторный колл только после того, как спред сошёлся
         "quote": "USDT",
     },
     # Telegram

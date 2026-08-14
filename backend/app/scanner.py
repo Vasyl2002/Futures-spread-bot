@@ -40,6 +40,8 @@ class SpreadScanner:
         self.last_scan_ts: int | None = None
         self.scanned_symbols: int = 0
         self.tick_ms: int = 0
+        # монета -> активный колл, пока спред не сошёлся
+        self._open: dict[str, dict] = {}
 
     def configure(self, settings: dict[str, Any]) -> None:
         self._settings = settings
@@ -185,27 +187,69 @@ class SpreadScanner:
         return width <= MAX_BOOK_WIDTH_PCT
 
     async def _alert(self, opps: list[dict]) -> None:
+        """Один колл на монету. Пока спред открыт — молчим.
+        Следующий колл (и сообщение «сошёлся») — только когда спред вернулся к норме.
+        """
         threshold = float(self.cfg().get("min_spread_pct", 2.0))
+        reset_at = float(self.cfg().get("reset_spread_pct", 0.4))
         max_alerts = int(self.cfg().get("max_alerts_per_tick", 6))
-        cooldown = float(self.cfg().get("cooldown_sec") or
-                         (self._settings.get("telegram") or {}).get("signal_cooldown_sec", 300))
-        candidates = [o for o in opps if o["spread"] >= threshold][: max_alerts * 3]
 
+        best: dict[str, dict] = {}
+        for o in opps:
+            prev = best.get(o["symbol"])
+            if prev is None or o["spread"] > prev["spread"]:
+                best[o["symbol"]] = o
+
+        # 1) закрытые спреды — один колл «сошёлся», после этого монета снова свободна
+        closed = []
+        for symbol, state in list(self._open.items()):
+            current = best.get(symbol)
+            spread_now = current["spread"] if current else 0.0
+            if spread_now <= reset_at:
+                closed.append((symbol, state, spread_now, current))
+                self._open.pop(symbol, None)
+
+        for symbol, state, spread_now, current in closed:
+            await self._send_close(symbol, state, spread_now, current)
+
+        # 2) новые открытия — не больше одной монеты-колла, лучшая комбинация бирж
         sent = 0
-        for opp in candidates:
+        ranked = sorted(best.values(), key=lambda x: x["spread"], reverse=True)
+        for opp in ranked:
             if sent >= max_alerts:
                 break
-            key = f"{opp['symbol']}:{opp['long']['exchange']}:{opp['short']['exchange']}:{opp['kind']}"
-            if not notifier.signal_allowed_key(key, cooldown):
+            symbol = opp["symbol"]
+            if symbol in self._open:
                 continue
-            # подтверждаем реальным стаканом — отсекаем ложные last/mark
+            if opp["spread"] < threshold:
+                continue
             confirmed = await self._confirm(opp)
             if confirmed is None or confirmed["spread"] < threshold:
                 continue
-            notifier.mark_signal_key(key)
+            if symbol in self._open:
+                continue
+            self._open[symbol] = {
+                "spread": confirmed["spread"],
+                "long": confirmed["long"],
+                "short": confirmed["short"],
+                "kind": confirmed["kind"],
+                "ts": int(time.time() * 1000),
+            }
             await self._send_call(confirmed)
             self.recent_alerts.appendleft({**confirmed, "ts": int(time.time() * 1000)})
             sent += 1
+
+    async def _send_close(self, symbol: str, state: dict, spread_now: float, current: dict | None) -> None:
+        long = state.get("long") or {}
+        short = state.get("short") or {}
+        text = (
+            f"✅ <b>СПРЕД {symbol}/USDT сошёлся</b>  {spread_now:+.3f}%\n"
+            f"Был колл {state.get('spread', 0):+.3f}%: "
+            f"LONG {long.get('label', '')} → SHORT {short.get('label', '')}\n"
+            f"Можно снова ждать расхождение."
+        )
+        await notifier.send(text)
+        log.info("spread closed %s now=%.3f%% was=%.3f%%", symbol, spread_now, state.get("spread", 0))
 
     async def _confirm(self, opp: dict) -> dict | None:
         try:

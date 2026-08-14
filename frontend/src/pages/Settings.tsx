@@ -19,6 +19,7 @@ export default function Settings() {
         include_spot: true,
         max_alerts_per_tick: 6,
         cooldown_sec: 300,
+        reset_spread_pct: 0.4,
         quote: 'USDT',
         ...(next.scanner || {}),
       }
@@ -209,8 +210,9 @@ export default function Settings() {
           </label>
         </div>
         <p className="text-xs text-term-muted mb-3">
-          Сам смотрит все монеты на 4 биржах. Карточки создавать не нужно — как только спред выше
-          порога, сразу колл в Telegram.
+          Сам смотрит все монеты на 4 биржах. На каждую монету — один колл. Пока спред открыт,
+          повторных сообщений не будет. Когда спред сойдётся (ниже порога «сошёлся») — придёт
+          закрывающий колл, и монета снова может дать сигнал.
         </p>
         <div className="grid md:grid-cols-4 gap-3">
           <div>
@@ -233,12 +235,13 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label className="text-xs text-term-muted">Антиспам на пару, сек</label>
+            <label className="text-xs text-term-muted">Сошёлся, если спред ниже %</label>
             <input
               type="number"
+              step="0.05"
               className="input mt-1"
-              value={form.scanner?.cooldown_sec ?? 300}
-              onChange={(e) => setPath(['scanner', 'cooldown_sec'], Number(e.target.value))}
+              value={form.scanner?.reset_spread_pct ?? 0.4}
+              onChange={(e) => setPath(['scanner', 'reset_spread_pct'], Number(e.target.value))}
             />
           </div>
           <label className="flex items-end gap-2 text-sm pb-2 cursor-pointer">
