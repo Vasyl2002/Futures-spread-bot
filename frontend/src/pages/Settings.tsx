@@ -14,7 +14,7 @@ export default function Settings() {
       next.scanner = {
         enabled: true,
         interval_sec: 12,
-        min_spread_pct: 0.25,
+        min_spread_pct: 2.0,
         display_min_pct: 0.08,
         include_spot: true,
         max_alerts_per_tick: 6,
@@ -219,7 +219,7 @@ export default function Settings() {
               type="number"
               step="0.05"
               className="input mt-1"
-              value={form.scanner?.min_spread_pct ?? 0.25}
+              value={form.scanner?.min_spread_pct ?? 2}
               onChange={(e) => setPath(['scanner', 'min_spread_pct'], Number(e.target.value))}
             />
           </div>

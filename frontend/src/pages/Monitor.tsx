@@ -17,7 +17,7 @@ export default function Monitor() {
   const { scanner, scannerMeta, settings, setTab, loadCards, toast } = useStore()
   const [q, setQ] = useState('')
   const [kind, setKind] = useState<'all' | 'fut-fut' | 'fut-spot'>('all')
-  const threshold = settings?.scanner?.min_spread_pct ?? 0.25
+  const threshold = settings?.scanner?.min_spread_pct ?? 2
 
   const rows = useMemo(() => {
     return scanner.filter((o) => {

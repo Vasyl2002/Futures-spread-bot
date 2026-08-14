@@ -185,7 +185,7 @@ class SpreadScanner:
         return width <= MAX_BOOK_WIDTH_PCT
 
     async def _alert(self, opps: list[dict]) -> None:
-        threshold = float(self.cfg().get("min_spread_pct", 0.25))
+        threshold = float(self.cfg().get("min_spread_pct", 2.0))
         max_alerts = int(self.cfg().get("max_alerts_per_tick", 6))
         cooldown = float(self.cfg().get("cooldown_sec") or
                          (self._settings.get("telegram") or {}).get("signal_cooldown_sec", 300))
@@ -262,7 +262,7 @@ class SpreadScanner:
             "data": self.opportunities[:60],
             "alerts": list(self.recent_alerts)[:40],
             "enabled": self.cfg().get("enabled", True),
-            "min_spread_pct": self.cfg().get("min_spread_pct", 0.25),
+            "min_spread_pct": self.cfg().get("min_spread_pct", 2.0),
         }
 
 

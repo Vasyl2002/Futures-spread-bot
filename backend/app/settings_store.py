@@ -18,7 +18,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "scanner": {
         "enabled": True,
         "interval_sec": 12,
-        "min_spread_pct": 0.25,     # порог колла в Telegram
+        "min_spread_pct": 2.0,      # порог колла в Telegram
         "display_min_pct": 0.08,    # что показывать в мониторе
         "include_spot": True,       # ещё фьюч↔спот (шорт всегда на фьючах)
         "max_alerts_per_tick": 6,
@@ -69,7 +69,20 @@ async def load_settings() -> dict[str, Any]:
     async with SessionLocal() as session:
         row = (await session.execute(select(KV).where(KV.key == "settings"))).scalar_one_or_none()
     stored = json.loads(row.value) if row and row.value else {}
-    _cache = _deep_merge(DEFAULT_SETTINGS, stored)
+    merged = _deep_merge(DEFAULT_SETTINGS, stored)
+    # старый дефолт 0.25% заспамил Telegram — поднимаем сохранённый порог до 2%
+    sc = merged.setdefault("scanner", {})
+    old = sc.get("min_spread_pct")
+    if old is None or old <= 0.5:
+        sc["min_spread_pct"] = 2.0
+        async with SessionLocal() as session:
+            row = (await session.execute(select(KV).where(KV.key == "settings"))).scalar_one_or_none()
+            if row is None:
+                session.add(KV(key="settings", value=json.dumps(merged)))
+            else:
+                row.value = json.dumps(merged)
+            await session.commit()
+    _cache = merged
     return _cache
 
 
